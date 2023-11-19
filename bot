@@ -1,0 +1,163 @@
+import ccxt
+import ipywidgets as widgets
+from IPython.display import display
+import time
+from datetime import datetime
+import os  # Importer la bibliothèque os pour accéder aux variables d'environnement
+
+# Récupérer les informations d'identification pour Binance et Kucoin à partir des variables d'environnement
+
+api_key_binance = os.environ['API_KEY_BINANCE']='nRsuWHW5A9Jha8qfacJBuSyvCxWyw15lM6G9O5oe6WMXIZ4U2NNR8mVtql04aWLl'
+api_secret_binance = os.environ['API_SECRET_BINANCE']='ZRFVZAyFkCZYdpc7JYUCeeqIVIi1hI4b3KsnVQED26a9zrdljevt3kAAXYFBWAxV'
+api_key_kucoin = os.environ['API_KEY_KUCOIN']='65564aa0a91d4100016bb98e'
+api_secret_kucoin = os.environ['API_SECRET_KUCOIN']='dce494bc-8f26-4a50-b0db-ff4d3b6571ae'
+api_passphrase_kucoin = os.environ['API_PASSPHRASE_KUCOIN']='komkomcrayonceleste'
+
+
+# Solde à utiliser pour chaque échange
+balance_binance = 100  # à remplacer par votre solde réel
+balance_kucoin = 100 # à remplacer par votre solde réel
+
+# Lot à utiliser pour passer les transactions
+lot_size = 0.03  # à remplacer par la taille de lot que vous souhaitez utiliser
+
+# Liste des symboles à suivre
+symbols = ['YFI/USDT', 'BTC/USDT','ETH/USDT','BTC/TUSD','SOL/USDT','BTC/EUR']
+
+# Créer un widget pour chaque symbole
+widgets_binance = {symbol: widgets.HTML(value='') for symbol in symbols}
+widgets_kucoin = {symbol: widgets.HTML(value='') for symbol in symbols}
+widgets_arbitrage = {symbol: widgets.HTML(value='') for symbol in symbols}
+widgets_profit = {symbol: widgets.HTML(value='') for symbol in symbols}  # Nouveau widget pour afficher le profit
+
+# Créer un widget pour afficher le solde et le lot utilisés
+balance_lot_widget = widgets.HTML(value=f'Solde utilisé : {balance_binance + balance_kucoin} USDT <br> Lot utilisé : {lot_size}')  # Nouveau widget pour afficher le solde et le lot utilisés
+
+# Widget pour afficher le bénéfice total
+total_profit_widget = widgets.HTML(value='')
+
+# Widget pour afficher le nombre d'opérations, le taux de réussite et le bénéfice moyen
+stats_widget = widgets.HTML(value='')  # Nouveau widget pour afficher les statistiques
+
+# Widget pour afficher la fréquence de vérification des opportunités
+frequency_widget = widgets.HTML(value='')  # Nouveau widget pour afficher la fréquence
+
+# Afficher les widgets
+display(balance_lot_widget)  # Afficher le widget de solde et de lot
+for symbol in symbols:
+    display(widgets_binance[symbol])
+    display(widgets_kucoin[symbol])
+    display(widgets_arbitrage[symbol])
+    display(widgets_profit[symbol])  # Afficher le widget de profit
+display(total_profit_widget)  # Afficher le widget de bénéfice total
+display(stats_widget)  # Afficher le widget de statistiques
+display(frequency_widget)  # Afficher le widget de fréquence
+
+# Bénéfice total
+total_profit = 0
+
+# Nombre d'opérations
+num_operations = 0
+
+# Nombre d'opérations réussies
+num_success = 0
+
+# Fréquence de vérification des opportunités
+frequency = 1  # Fréquence en secondes
+
+# Initialiser les échanges
+exchange_binance = ccxt.binance({
+    'apiKey': api_key_binance,
+    'secret': api_secret_binance,
+})
+
+exchange_kucoin = ccxt.kucoin({
+    'apiKey': api_key_kucoin,
+    'secret': api_secret_kucoin,
+    'password': api_passphrase_kucoin,
+})
+
+# Récupérer le prix et les frais en temps réel
+while True:
+    for symbol in symbols:
+        try:
+            # Récupérer le prix et les frais sur Binance
+            order_book_binance = exchange_binance.fetch_order_book(symbol)
+            price_binance = order_book_binance['bids'][0][0] if len(order_book_binance['bids']) > 0 else None
+            fees_binance = exchange_binance.fees['trading']['maker']  # Récupérer les frais directement à partir de l'échange
+            widgets_binance[symbol].value = f'Binance {symbol}: {price_binance} <span style="color:red">Frais: {fees_binance}</span>'
+
+            # Récupérer le prix et les frais sur Kucoin
+            order_book_kucoin = exchange_kucoin.fetch_order_book(symbol)
+            price_kucoin = order_book_kucoin['bids'][0][0] if len(order_book_kucoin['bids']) > 0 else None
+            fees_kucoin = exchange_kucoin.fees['trading']['maker']  # Récupérer les frais directement à partir de l'échange
+            widgets_kucoin[symbol].value = f'Kucoin {symbol}: {price_kucoin} <span style="color:red">Frais: {fees_kucoin}</span>'
+
+            # Détecter les opportunités d'arbitrage et calculer le profit
+            if price_binance is not None and price_kucoin is not None:
+                if price_binance > price_kucoin:
+                    widgets_arbitrage[symbol].value = f'{datetime.now().strftime("%H:%M:%S")} Arbitrage détecté! <span style="color:red">**Vendre** {symbol} sur Binance à {price_binance}</span> et <span style="color:green">**acheter** sur Kucoin à {price_kucoin}</span>'
+                    profit = (price_binance - price_kucoin - fees_binance - fees_kucoin) * lot_size
+                    profit_percentage = (profit / (price_kucoin * lot_size)) * 100
+                    widgets_profit[symbol].value = f'Profit : {profit:.2f} USDT ({profit_percentage:.2f}%)'  # Arrondir le profit à deux décimales
+                    total_profit += profit
+                    num_operations += 1  # Augmenter le nombre d'opérations
+                    if profit > 0:  # Si le profit est positif, augmenter le nombre d'opérations réussies
+                        num_success += 1
+                    # Simuler la conversion du solde de Binance en USDT si nécessaire
+                    base, quote = symbol.split('/')  # Séparer le symbole en base et quote
+                    if base != 'USDT':  # Si la base n'est pas USDT, il faut la convertir
+                        balance_binance_base = balance_binance / price_binance  # Simuler le solde de la base sur Binance en divisant le solde USDT par le prix de la base
+                        if balance_binance_base > 0:  # Si le solde de la base est positif, le convertir en USDT
+                            balance_binance -= balance_binance_base * price_binance * (1 + fees_binance)  # Simuler la conversion en soustrayant le montant vendu du solde USDT
+                            widgets_arbitrage[symbol].value += f'<br> Conversion de {balance_binance_base} {base} en USDT sur Binance'  # Afficher la conversion dans le widget
+                    # Simuler la conversion du solde de Kucoin en USDT si nécessaire
+                    if quote != 'USDT':  # Si la quote n'est pas USDT, il faut la convertir
+                        balance_kucoin_quote = balance_kucoin / price_kucoin  # Simuler le solde de la quote sur Kucoin en divisant le solde USDT par le prix de la quote
+                        if balance_kucoin_quote > 0:  # Si le solde de la quote est positif, le convertir en USDT
+                            balance_kucoin -= balance_kucoin_quote * price_kucoin * (1 + fees_kucoin)  # Simuler la conversion en soustrayant le montant acheté du solde USDT
+                            widgets_arbitrage[symbol].value += f'<br> Conversion de {balance_kucoin_quote} {quote} en USDT sur Kucoin'  # Afficher la conversion dans le widget
+                elif price_kucoin > price_binance:
+                    widgets_arbitrage[symbol].value = f'{datetime.now().strftime("%H:%M:%S")} Arbitrage détecté! <span style="color:red">**Vendre** {symbol} sur Kucoin à {price_kucoin}</span> et <span style="color:green">**acheter** sur Binance à {price_binance}</span>'
+                    profit = (price_kucoin - price_binance - fees_kucoin - fees_binance) * lot_size
+                    profit_percentage = (profit / (price_binance * lot_size)) * 100
+                    widgets_profit[symbol].value = f'Profit : {profit:.2f} USDT ({profit_percentage:.2f}%)'  # Arrondir le profit à deux décimales
+                    total_profit += profit
+                    num_operations += 1  # Augmenter le nombre d'opérations
+                    if profit > 0:  # Si le profit est positif, augmenter le nombre d'opérations réussies
+                        num_success += 1
+                    # Simuler la conversion du solde de Kucoin en USDT si nécessaire
+                    base, quote = symbol.split('/')  # Séparer le symbole en base et quote
+                    if base != 'USDT':  # Si la base n'est pas USDT, il faut la convertir
+                        balance_kucoin_base = balance_kucoin / price_kucoin  # Simuler le solde de la base sur Kucoin en divisant le solde USDT par le prix de la base
+                        if balance_kucoin_base > 0:  # Si le solde de la base est positif, le convertir en USDT
+                            balance_kucoin -= balance_kucoin_base * price_kucoin * (1 + fees_kucoin)  # Simuler la conversion en soustrayant le montant vendu du solde USDT
+                            widgets_arbitrage[symbol].value += f'<br> Conversion de {balance_kucoin_base} {base} en USDT sur Kucoin'  # Afficher la conversion dans le widget
+                    # Simuler la conversion du solde de Binance en USDT si nécessaire
+                    if quote != 'USDT':  # Si la quote n'est pas USDT, il faut la convertir
+                        balance_binance_quote = balance_binance / price_binance  # Simuler le solde de la quote sur Binance en divisant le solde USDT par le prix de la quote
+                        if balance_binance_quote > 0:  # Si le solde de la quote est positif, le convertir en USDT
+                            balance_binance -= balance_binance_quote * price_binance * (1 + fees_binance)  # Simuler la conversion en soustrayant le montant acheté du solde USDT
+                            widgets_arbitrage[symbol].value += f'<br> Conversion de {balance_binance_quote} {quote} en USDT sur Binance'  # Afficher la conversion dans le widget
+        except ccxt.RequestTimeout as e:
+            print(f'Request timed out: {e}')
+        except ccxt.ExchangeNotAvailable as e:
+            print(f'Exchange not available: {e}')
+        except ccxt.ExchangeError as e:
+            print(f'Exchange error: {e}')
+        except Exception as e:
+            print(f'An error occurred: {e}')
+
+    time.sleep(frequency)  # Mettre à jour selon la fréquence choisie
+
+    # Afficher le bénéfice total
+    total_profit_widget.value = f'<span style="color:blue">Bénéfice total : {total_profit:.2f} USDT</span>'  # Arrondir le bénéfice total à deux décimales
+
+    # Afficher les statistiques
+    if num_operations > 0:  # Si au moins une opération a été effectuée, calculer le taux de réussite et le bénéfice moyen
+        success_rate = (num_success / num_operations) * 100  # Calculer le taux de réussite en pourcentage
+        average_profit = total_profit / num_operations  # Calculer le bénéfice moyen par opération
+        stats_widget.value = f'Nombre d\'opérations : {num_operations} <br> Taux de réussite : <span style="color:green">{success_rate:.2f}%</span> <br> Bénéfice moyen : {average_profit:.2f} USDT'  # Afficher les statistiques dans le widget
+
+    # Afficher la fréquence de vérification des opportunités
+    frequency_widget.value = f'Fréquence de vérification des opportunités : {frequency} seconde(s)'  # Afficher la fréquence dans le widget
